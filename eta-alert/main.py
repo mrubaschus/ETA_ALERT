@@ -224,6 +224,127 @@ HEADERS = {
 }
 
 
+def _reload_runtime_config_from_env() -> None:
+    """Reload selected config from environment variables.
+
+    Some hosted runtimes inject secrets/config late in the init lifecycle.
+    This function ensures we don't permanently cache missing values at import time.
+    """
+
+    def _truthy(name: str, default: str = "0") -> bool:
+        return os.getenv(name, default).lower().strip() in ("1", "true", "yes", "y")
+
+    global SAMSARA_TOKEN
+    global NOTIFY_MODE
+    global WEBHOOK_URL, WEBHOOK_METHOD, WEBHOOK_HEADERS_JSON
+    global _WEBHOOK_HEARTBEAT_REQUESTED, _WEBHOOK_HEARTBEAT_ALLOWED, WEBHOOK_HEARTBEAT
+    global DRY_RUN, USE_SAMPLE_DATA
+    global DISPLAY_TIMEZONE
+    global TARGET_MINUTES, WINDOW_MINUTES
+    global TRIGGER_MODE, TRIGGER_REQUIRE_CROSSING, TRIGGER_NO_HISTORY_MODE
+    global ADDRESS_NAME_CONTAINS_ANY, ADDRESS_NAME_EXCLUDES_ANY
+    global ROUTE_FORCE_INCLUDE_ON_STOP_ADDRESS_CONTAINS_ANY
+    global _ADDR_ALLOW_PATTERNS, _ADDR_DENY_PATTERNS, _ROUTE_FORCE_INCLUDE_PATTERNS
+    global SAMSARA_BASE_URL, SAMSARA_ROUTES_PATH
+    global ROUTES_START_TIME, ROUTES_END_TIME
+    global ROUTES_LOOKBACK_MINUTES, ROUTES_LOOKAHEAD_MINUTES
+    global ROUTES_PAGE_SIZE, ROUTES_MAX_PAGES_PER_RUN, ROUTES_INCLUDE
+    global DATA_SOURCE
+    global SAMSARA_AUDIT_LOGS_PATH, AUDIT_LOGS_CURSOR_PARAM
+    global AUDIT_LOGS_EXPAND_PARAM, AUDIT_LOGS_EXPAND_VALUE
+    global AUDIT_LOGS_MAX_PAGES_PER_RUN
+    global HEADERS
+
+    # Core secrets/config
+    SAMSARA_TOKEN = os.getenv("SAMSARA_TOKEN")
+
+    # Notification mode
+    NOTIFY_MODE = os.getenv("NOTIFY_MODE", "email").lower().strip()
+
+    # Webhook
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()
+    WEBHOOK_METHOD = os.getenv("WEBHOOK_METHOD", "POST").upper().strip()
+    WEBHOOK_HEADERS_JSON = os.getenv("WEBHOOK_HEADERS_JSON", "").strip()
+
+    _WEBHOOK_HEARTBEAT_REQUESTED = _truthy("WEBHOOK_HEARTBEAT", "0")
+    _WEBHOOK_HEARTBEAT_ALLOWED = _truthy("WEBHOOK_HEARTBEAT_ALLOWED", "0")
+    WEBHOOK_HEARTBEAT = _WEBHOOK_HEARTBEAT_REQUESTED and _WEBHOOK_HEARTBEAT_ALLOWED
+
+    # Testing / safety
+    DRY_RUN = _truthy("DRY_RUN", "0")
+    USE_SAMPLE_DATA = _truthy("USE_SAMPLE_DATA", "0")
+
+    # Display
+    DISPLAY_TIMEZONE = os.getenv("DISPLAY_TIMEZONE", "UTC").strip() or "UTC"
+
+    # Routing/ETA tuning
+    try:
+        TARGET_MINUTES = float(os.getenv("TARGET_MINUTES", "60"))
+    except Exception:
+        TARGET_MINUTES = 60.0
+    try:
+        WINDOW_MINUTES = float(os.getenv("WINDOW_MINUTES", "5"))
+    except Exception:
+        WINDOW_MINUTES = 5.0
+
+    # Trigger semantics
+    TRIGGER_MODE = os.getenv("TRIGGER_MODE", "crossing").lower().strip()
+    TRIGGER_REQUIRE_CROSSING = _truthy("TRIGGER_REQUIRE_CROSSING", "0")
+    TRIGGER_NO_HISTORY_MODE = os.getenv("TRIGGER_NO_HISTORY_MODE", "window").lower().strip()
+
+    # Address filtering
+    ADDRESS_NAME_CONTAINS_ANY = os.getenv("ADDRESS_NAME_CONTAINS_ANY", "").strip()
+    ADDRESS_NAME_EXCLUDES_ANY = os.getenv("ADDRESS_NAME_EXCLUDES_ANY", "").strip()
+    ROUTE_FORCE_INCLUDE_ON_STOP_ADDRESS_CONTAINS_ANY = os.getenv(
+        "ROUTE_FORCE_INCLUDE_ON_STOP_ADDRESS_CONTAINS_ANY", ""
+    ).strip()
+
+    _ADDR_ALLOW_PATTERNS = _split_csv_patterns(ADDRESS_NAME_CONTAINS_ANY)
+    _ADDR_DENY_PATTERNS = _split_csv_patterns(ADDRESS_NAME_EXCLUDES_ANY)
+    _ROUTE_FORCE_INCLUDE_PATTERNS = _split_csv_patterns(ROUTE_FORCE_INCLUDE_ON_STOP_ADDRESS_CONTAINS_ANY)
+
+    # Samsara API
+    SAMSARA_BASE_URL = os.getenv("SAMSARA_BASE_URL", "https://api.samsara.com")
+    SAMSARA_ROUTES_PATH = os.getenv("SAMSARA_ROUTES_PATH", "/fleet/routes")
+
+    ROUTES_START_TIME = os.getenv("ROUTES_START_TIME", "").strip()
+    ROUTES_END_TIME = os.getenv("ROUTES_END_TIME", "").strip()
+    try:
+        ROUTES_LOOKBACK_MINUTES = int(os.getenv("ROUTES_LOOKBACK_MINUTES", "10080"))
+    except Exception:
+        ROUTES_LOOKBACK_MINUTES = 10080
+    try:
+        ROUTES_LOOKAHEAD_MINUTES = int(os.getenv("ROUTES_LOOKAHEAD_MINUTES", "10080"))
+    except Exception:
+        ROUTES_LOOKAHEAD_MINUTES = 10080
+    try:
+        ROUTES_PAGE_SIZE = int(os.getenv("ROUTES_PAGE_SIZE", "512"))
+    except Exception:
+        ROUTES_PAGE_SIZE = 512
+    try:
+        ROUTES_MAX_PAGES_PER_RUN = int(os.getenv("ROUTES_MAX_PAGES_PER_RUN", "5"))
+    except Exception:
+        ROUTES_MAX_PAGES_PER_RUN = 5
+    ROUTES_INCLUDE = os.getenv("ROUTES_INCLUDE", "").strip()
+
+    # Data source
+    DATA_SOURCE = os.getenv("DATA_SOURCE", "routes").lower().strip()
+    SAMSARA_AUDIT_LOGS_PATH = os.getenv("SAMSARA_AUDIT_LOGS_PATH", "/fleet/routes/audit-logs/feed")
+    AUDIT_LOGS_CURSOR_PARAM = os.getenv("AUDIT_LOGS_CURSOR_PARAM", "after").strip()
+    AUDIT_LOGS_EXPAND_PARAM = os.getenv("AUDIT_LOGS_EXPAND_PARAM", "expand").strip()
+    AUDIT_LOGS_EXPAND_VALUE = os.getenv("AUDIT_LOGS_EXPAND_VALUE", "route").strip()
+    try:
+        AUDIT_LOGS_MAX_PAGES_PER_RUN = int(os.getenv("AUDIT_LOGS_MAX_PAGES_PER_RUN", "10"))
+    except Exception:
+        AUDIT_LOGS_MAX_PAGES_PER_RUN = 10
+
+    # Headers must be built from the *current* token.
+    HEADERS = {
+        "Authorization": f"Bearer {SAMSARA_TOKEN}" if SAMSARA_TOKEN else "",
+        "Content-Type": "application/json",
+    }
+
+
 _ROUTE_DETAILS_CACHE: dict[str, dict[str, Any]] = {}
 _ROUTE_DETAILS_STATS = {"attempted": 0, "ok": 0, "error": 0}
 
@@ -1454,6 +1575,7 @@ def _compute_customer_name(route: dict[str, Any]) -> Optional[str]:
 
 
 def main(event=None, context=None):
+    _reload_runtime_config_from_env()
     # DATA_SOURCE=routs: poll all routes and scan stops
     # DATA_SOURCE=audit_logs: pull incremental changes from audit log feed using stored cursor
     routes: list[dict[str, Any]] = []
