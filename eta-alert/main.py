@@ -914,48 +914,66 @@ def _escape_html(value: Any) -> str:
 
 
 def _build_email_content(*, stop: dict[str, Any], eta_iso: str, route: Optional[dict[str, Any]]) -> tuple[str, str, str]:
-        route_obj = route or {}
-        stop_name = stop.get("name") or stop.get("id") or "(unknown stop)"
-        route_name = route_obj.get("name") or route_obj.get("id") or "(unknown route)"
-        tracking_url = _build_tracking_url(stop=stop, route=route_obj) or ""
+    route_obj = route or {}
+    stop_name = stop.get("name") or stop.get("id") or "(unknown stop)"
+    route_name = route_obj.get("name") or route_obj.get("id") or "(unknown route)"
+    tracking_url = _build_tracking_url(stop=stop, route=route_obj) or ""
+    customer_name = _compute_customer_name(route_obj) if isinstance(route_obj, dict) else None
 
-        try:
-                minutes = minutes_until(eta_iso)
-                minutes_s = f"{minutes:.0f}"
-        except Exception:
-                minutes_s = "(unknown)"
+    try:
+        minutes = minutes_until(eta_iso)
+        minutes_s = f"{minutes:.0f}"
+    except Exception:
+        minutes_s = "(unknown)"
 
-        subject_tpl = os.getenv("EMAIL_SUBJECT", "Delivery ETA Alert: {stop} (~{minutes} min)")
-        try:
-            subject = subject_tpl.format(stop=stop_name, route=route_name, minutes=minutes_s, eta=eta_iso)
-        except Exception:
-            subject = subject_tpl
-
-        try:
-            eta_display = _format_dt_for_display(_parse_rfc3339(eta_iso))
-        except Exception:
-            eta_display = eta_iso
-
-        text = (
-                "Delivery ETA Alert\n"
-                f"Stop: {stop_name}\n"
-                f"Route: {route_name}\n"
-            f"ETA ({DISPLAY_TIMEZONE}): {eta_display}\n"
-            f"ETA (UTC): {eta_iso}\n"
-                f"Minutes until ETA: {minutes_s}\n"
-                + (f"Tracking: {tracking_url}\n" if tracking_url else "")
+    customer_tag = f" ({customer_name})" if customer_name else ""
+    subject_tpl = os.getenv(
+        "EMAIL_SUBJECT",
+        "Delivery ETA Alert{customer_tag}: {stop} (~{minutes} min)",
+    )
+    try:
+        subject = subject_tpl.format(
+            stop=stop_name,
+            route=route_name,
+            minutes=minutes_s,
+            eta=eta_iso,
+            customer=(customer_name or ""),
+            customer_tag=customer_tag,
         )
+    except Exception:
+        subject = subject_tpl
 
-        stop_name_h = _escape_html(stop_name)
-        route_name_h = _escape_html(route_name)
-        eta_h = _escape_html(eta_display)
-        eta_utc_h = _escape_html(eta_iso)
-        minutes_h = _escape_html(minutes_s)
-        tracking_h = _escape_html(tracking_url)
+    try:
+        eta_display = _format_dt_for_display(_parse_rfc3339(eta_iso))
+    except Exception:
+        eta_display = eta_iso
 
-        button_html = ""
-        if tracking_url:
-                button_html = f"""
+    text = (
+        "Delivery ETA Alert\n"
+        f"Stop: {stop_name}\n"
+        f"Route: {route_name}\n"
+        + (f"Customer: {customer_name}\n" if customer_name else "")
+        + f"ETA ({DISPLAY_TIMEZONE}): {eta_display}\n"
+        + f"ETA (UTC): {eta_iso}\n"
+        + f"Minutes until ETA: {minutes_s}\n"
+        + (f"Tracking: {tracking_url}\n" if tracking_url else "")
+    )
+
+    stop_name_h = _escape_html(stop_name)
+    route_name_h = _escape_html(route_name)
+    customer_row_html = (
+        f'<div style="font-size:13px;color:#6b7280;margin-top:4px;">Customer: {_escape_html(customer_name)}</div>'
+        if customer_name
+        else ""
+    )
+    eta_h = _escape_html(eta_display)
+    eta_utc_h = _escape_html(eta_iso)
+    minutes_h = _escape_html(minutes_s)
+    tracking_h = _escape_html(tracking_url)
+
+    button_html = ""
+    if tracking_url:
+        button_html = f"""
                 <tr>
                     <td style=\"padding: 16px 24px 24px 24px;\">
                         <a href=\"{tracking_h}\" style=\"display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600;\">Open Live Tracking</a>
@@ -963,7 +981,7 @@ def _build_email_content(*, stop: dict[str, Any], eta_iso: str, route: Optional[
                 </tr>
                 """
 
-        html = f"""
+    html = f"""
         <!doctype html>
         <html>
             <body style=\"margin:0;padding:0;background:#f3f4f6;\">
@@ -981,6 +999,7 @@ def _build_email_content(*, stop: dict[str, Any], eta_iso: str, route: Optional[
                                     <td style=\"padding:18px 24px 0 24px;font-family:Segoe UI, Arial, sans-serif;color:#111827;\">
                                         <div style=\"font-size:18px;font-weight:700;\">{stop_name_h}</div>
                                         <div style=\"font-size:13px;color:#6b7280;margin-top:4px;\">Route: {route_name_h}</div>
+                                        {customer_row_html}
                                     </td>
                                 </tr>
                                 <tr>
@@ -1010,7 +1029,7 @@ def _build_email_content(*, stop: dict[str, Any], eta_iso: str, route: Optional[
         </html>
         """
 
-        return subject, text, html
+    return subject, text, html
 
 
 def send_email(
@@ -1049,6 +1068,8 @@ def send_webhook(*, stop: dict[str, Any], eta_iso: str, route: Optional[dict[str
     route_obj = route or {}
     tracking_url = _build_tracking_url(stop=stop, route=route_obj) if isinstance(route_obj, dict) else None
 
+    customer_name = _compute_customer_name(route_obj) if isinstance(route_obj, dict) else None
+
     next_stop_id: Optional[str] = None
     next_stop_eta: Optional[str] = None
     next_stop_minutes: Optional[int] = None
@@ -1068,6 +1089,7 @@ def send_webhook(*, stop: dict[str, Any], eta_iso: str, route: Optional[dict[str
 
     payload = {
         "type": "eta_alert",
+        "customerName": customer_name,
         "targetMinutes": TARGET_MINUTES,
         "windowMinutes": WINDOW_MINUTES,
         "minutesUntil": minutes_until_rounded,
@@ -1085,6 +1107,7 @@ def send_webhook(*, stop: dict[str, Any], eta_iso: str, route: Optional[dict[str
             "id": route_obj.get("id"),
             "name": route_obj.get("name"),
             "externalIds": route_obj.get("externalIds"),
+            "customerName": customer_name,
             "nextStopId": next_stop_id,
             "nextStopEta": next_stop_eta,
             "nextStopMinutesUntil": next_stop_minutes,
@@ -1107,7 +1130,7 @@ def send_webhook(*, stop: dict[str, Any], eta_iso: str, route: Optional[dict[str
         return
 
     print(
-        f"[webhook] sending stopId={stop.get('id')} minutesUntil={minutes_until_rounded} phone={phone_e164} eta={eta_iso}"
+        f"[webhook] sending stopId={stop.get('id')} minutesUntil={minutes_until_rounded} customer={customer_name} phone={phone_e164} eta={eta_iso}"
     )
 
     if method == "PUT":
@@ -1396,6 +1419,30 @@ def _route_next_upcoming_stop_info(route: dict[str, Any]) -> tuple[Optional[str]
         return best_stop_id, best_eta, best_minutes
 
     return None, None, None
+
+
+def _compute_customer_name(route: dict[str, Any]) -> Optional[str]:
+    """Infer a friendly customer name for a route.
+
+    Rules:
+    - If it's a Gerkin load (any stop contains 'gerkin'), customer is 'Gerkin'.
+    - Else if the starting place (first stop) contains 'bomgaars', customer is 'Bomgaars'.
+    """
+    stops = route.get("stops")
+    if not isinstance(stops, list) or not stops:
+        return None
+
+    for stop in stops:
+        if not isinstance(stop, dict):
+            continue
+        if "gerkin" in _stop_address_name(stop).lower():
+            return "Gerkin"
+
+    first_stop = stops[0] if isinstance(stops[0], dict) else None
+    if isinstance(first_stop, dict) and "bomgaars" in _stop_address_name(first_stop).lower():
+        return "Bomgaars"
+
+    return None
 
 
 def main(event=None, context=None):
