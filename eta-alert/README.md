@@ -18,6 +18,23 @@ You can also switch to an *incremental* mode using `/fleet/routes/audit-logs/fee
 - `requirements.txt` — Python deps
 - `.env.example` — env/secret names
 
+## Deploying to Samsara Functions (recommended)
+
+This project is designed to run as a **scheduled** Samsara Function (not as a long-running process).
+
+- In Samsara Functions, configure a schedule (e.g. every 5 minutes).
+- Set the **Handler** to `main.main`.
+- Do **not** run with `--loop` inside Samsara Functions; the platform scheduler triggers each run.
+
+### Bundling safely (avoid leaking secrets)
+
+If you use the `samsara-fn` CLI to bundle a zip, make sure you **do not include** local secret files:
+
+- Do not bundle `eta-alert/.env` (local secrets).
+- Do not bundle `.function_storage*.json` (local state) unless you intentionally want to seed state.
+
+Tip: if the bundler warns about potentially sensitive files, remove them from the folder before bundling and rely on **Samsara Secrets** in the dashboard.
+
 ## Secrets / env vars
 
 Minimum:
@@ -44,6 +61,8 @@ Optional:
 - `CUSTOMER_LOOKUP_URL_TEMPLATE` — e.g. `https://internal-api/stops/{stop_id}` returning JSON like `{ "email": "a@b.com" }`
 - `EMAIL_REPLY_TO` — optional Reply-To address
 - `EMAIL_SUBJECT` — optional subject override; supports `{stop}`, `{route}`, `{minutes}`, `{eta}`
+
+  It also supports `{customer}` (e.g. `Gerkin`) and `{customer_tag}` (either `" (Gerkin)"` or empty).
 - `EMAIL_TO_OVERRIDE` — optional override recipient; if set, **all** emails go to this address (useful for testing)
 - `TARGET_MINUTES` — default `60`
 - `WINDOW_MINUTES` — default `5` (triggers in `[TARGET - WINDOW, TARGET + WINDOW)` minutes)
