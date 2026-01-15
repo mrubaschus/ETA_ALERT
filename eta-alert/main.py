@@ -29,6 +29,93 @@ import requests
 from storage import get_item, set_item
 
 
+def _maybe_apply_samsara_function_secrets_to_env() -> None:
+    """Best-effort: load Samsara Functions secrets and apply to os.environ.
+
+    In Samsara Functions, secrets may not be injected as process env vars by default.
+    The official examples load a JSON blob from AWS SSM using the platform-provided
+    `SamsaraFunctionSecretsPath` and then optionally `apply_to_env`.
+
+    We do the same here so deployments can rely on either:
+    - traditional env vars (local dev)
+    - the Functions secrets store (hosted)
+
+    This function is intentionally silent on failure (no secret values are logged).
+    """
+
+    # If the platform isn't present, do nothing.
+    secrets_path = os.environ.get("SamsaraFunctionSecretsPath")
+    if not secrets_path:
+        return
+
+    # Avoid re-loading on every call.
+    if os.environ.get("_ETA_ALERT_SECRETS_APPLIED") == "1":
+        return
+
+    try:
+        import json
+
+        import boto3  # type: ignore
+
+        # In the hosted environment, assume the function execution role for SSM access.
+        # This matches the pattern used in samsarahq/functions-examples.
+        role_arn = os.environ.get("SamsaraFunctionExecRoleArn")
+        session_name = os.environ.get("SamsaraFunctionName") or "eta-alert"
+
+        if role_arn:
+            sts = boto3.client("sts")
+            res = sts.assume_role(RoleArn=role_arn, RoleSessionName=session_name)
+            creds = res.get("Credentials") or {}
+            ssm = boto3.client(
+                "ssm",
+                aws_access_key_id=creds.get("AccessKeyId"),
+                aws_secret_access_key=creds.get("SecretAccessKey"),
+                aws_session_token=creds.get("SessionToken"),
+            )
+        else:
+            # Fallback: use ambient credentials if role arn isn't provided.
+            ssm = boto3.client("ssm")
+
+        param = ssm.get_parameter(Name=secrets_path, WithDecryption=True)
+        raw_value = ((param or {}).get("Parameter") or {}).get("Value")
+        if not isinstance(raw_value, str) or raw_value in ("", "null"):
+            os.environ["_ETA_ALERT_SECRETS_APPLIED"] = "1"
+            return
+
+        secrets = json.loads(raw_value)
+        if not isinstance(secrets, dict):
+            os.environ["_ETA_ALERT_SECRETS_APPLIED"] = "1"
+            return
+
+        # Apply secrets to env without overwriting existing env vars.
+        for k, v in secrets.items():
+            if not isinstance(k, str):
+                continue
+            if k in os.environ:
+                continue
+            if v is None:
+                continue
+            os.environ[k] = str(v)
+
+        # Compatibility mapping (common examples use SAMSARA_API_TOKEN / NOTIFY_WEBHOOK).
+        if "SAMSARA_TOKEN" not in os.environ:
+            for candidate in ("SAMSARA_API_TOKEN", "SAMSARA_API_KEY", "SAMSARA_KEY"):
+                if candidate in os.environ and os.environ.get(candidate):
+                    os.environ["SAMSARA_TOKEN"] = os.environ[candidate]
+                    break
+        if "WEBHOOK_URL" not in os.environ:
+            for candidate in ("NOTIFY_WEBHOOK", "WEBHOOK_URL"):
+                if candidate in os.environ and os.environ.get(candidate):
+                    os.environ["WEBHOOK_URL"] = os.environ[candidate]
+                    break
+
+        os.environ["_ETA_ALERT_SECRETS_APPLIED"] = "1"
+    except Exception:
+        # Never crash if secrets loading fails; caller will still error out with
+        # a clear Missing required env var message.
+        return
+
+
 SAMSARA_TOKEN = os.getenv("SAMSARA_TOKEN")
 
 # Email
@@ -254,6 +341,9 @@ def _reload_runtime_config_from_env() -> None:
     global AUDIT_LOGS_EXPAND_PARAM, AUDIT_LOGS_EXPAND_VALUE
     global AUDIT_LOGS_MAX_PAGES_PER_RUN
     global HEADERS
+
+    # Hosted: pull secrets into env if they aren't injected by default.
+    _maybe_apply_samsara_function_secrets_to_env()
 
     # Core secrets/config
     SAMSARA_TOKEN = os.getenv("SAMSARA_TOKEN")
