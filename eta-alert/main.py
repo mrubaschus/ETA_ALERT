@@ -116,6 +116,55 @@ def _maybe_apply_samsara_function_secrets_to_env() -> None:
         return
 
 
+def _maybe_apply_context_secrets_to_env(context: Any) -> None:
+    """Best-effort: apply secrets provided by the Functions runtime context.
+
+    Several official examples access secrets via `context.get_secrets()`.
+    If available, we use it as the highest-priority hosted secrets source.
+    """
+
+    if context is None:
+        return
+    # Avoid reapplying in the same process.
+    if os.environ.get("_ETA_ALERT_CONTEXT_SECRETS_APPLIED") == "1":
+        return
+
+    getter = getattr(context, "get_secrets", None)
+    if getter is None or not callable(getter):
+        return
+
+    try:
+        secrets = getter()
+        if not isinstance(secrets, dict):
+            os.environ["_ETA_ALERT_CONTEXT_SECRETS_APPLIED"] = "1"
+            return
+
+        for k, v in secrets.items():
+            if not isinstance(k, str):
+                continue
+            if k in os.environ:
+                continue
+            if v is None:
+                continue
+            os.environ[k] = str(v)
+
+        # Compatibility mapping (examples often use SAMSARA_API_TOKEN / NOTIFY_WEBHOOK).
+        if "SAMSARA_TOKEN" not in os.environ:
+            for candidate in ("SAMSARA_API_TOKEN", "SAMSARA_API_KEY", "SAMSARA_KEY"):
+                if candidate in os.environ and os.environ.get(candidate):
+                    os.environ["SAMSARA_TOKEN"] = os.environ[candidate]
+                    break
+        if "WEBHOOK_URL" not in os.environ:
+            for candidate in ("NOTIFY_WEBHOOK", "WEBHOOK_URL"):
+                if candidate in os.environ and os.environ.get(candidate):
+                    os.environ["WEBHOOK_URL"] = os.environ[candidate]
+                    break
+
+        os.environ["_ETA_ALERT_CONTEXT_SECRETS_APPLIED"] = "1"
+    except Exception:
+        return
+
+
 SAMSARA_TOKEN = os.getenv("SAMSARA_TOKEN")
 
 # Email
@@ -1665,7 +1714,30 @@ def _compute_customer_name(route: dict[str, Any]) -> Optional[str]:
 
 
 def main(event=None, context=None):
+    # Hosted: some runtimes provide secrets via the invocation context.
+    _maybe_apply_context_secrets_to_env(context)
+
     _reload_runtime_config_from_env()
+
+    # Optional diagnostics to debug missing secrets in hosted runtimes.
+    # Never prints secret values.
+    if os.getenv("DEBUG_SECRETS", "0").lower().strip() in ("1", "true", "yes", "y"):
+        print(
+            {
+                "secrets_debug": {
+                    "has_SamsaraFunctionSecretsPath": bool(os.environ.get("SamsaraFunctionSecretsPath")),
+                    "has_SamsaraFunctionExecRoleArn": bool(os.environ.get("SamsaraFunctionExecRoleArn")),
+                    "has_SamsaraFunctionName": bool(os.environ.get("SamsaraFunctionName")),
+                    "context_has_get_secrets": bool(getattr(context, "get_secrets", None)),
+                    "context_secrets_applied": os.environ.get("_ETA_ALERT_CONTEXT_SECRETS_APPLIED") == "1",
+                    "ssm_secrets_applied": os.environ.get("_ETA_ALERT_SECRETS_APPLIED") == "1",
+                    "env_has_SAMSARA_TOKEN": bool(os.environ.get("SAMSARA_TOKEN")),
+                    "env_has_SAMSARA_API_TOKEN": bool(os.environ.get("SAMSARA_API_TOKEN")),
+                    "env_has_WEBHOOK_URL": bool(os.environ.get("WEBHOOK_URL")),
+                    "env_has_NOTIFY_WEBHOOK": bool(os.environ.get("NOTIFY_WEBHOOK")),
+                }
+            }
+        )
     # DATA_SOURCE=routs: poll all routes and scan stops
     # DATA_SOURCE=audit_logs: pull incremental changes from audit log feed using stored cursor
     routes: list[dict[str, Any]] = []
