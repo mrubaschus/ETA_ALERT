@@ -10,9 +10,17 @@ try:
 
     from dotenv import load_dotenv
 
-    # In local dev, prefer values from .env so edits take effect on restart.
-    # In Samsara Functions, the .env file typically won't exist.
-    load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=True)
+    # Load eta-alert/.env for local development convenience.
+    # IMPORTANT: do NOT override already-set environment variables by default.
+    # This prevents accidental local `.env` values from stomping on hosted
+    # Secrets/config if a `.env` file is ever bundled/deployed.
+    dotenv_override = os.getenv("DOTENV_OVERRIDE", "0").lower().strip() in (
+        "1",
+        "true",
+        "yes",
+        "y",
+    )
+    load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=dotenv_override)
 except Exception:
     pass
 

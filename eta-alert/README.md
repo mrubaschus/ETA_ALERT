@@ -26,6 +26,8 @@ This project is designed to run as a **scheduled** Samsara Function (not as a lo
 - Set the **Handler** to `main.main`.
 - Do **not** run with `--loop` inside Samsara Functions; the platform scheduler triggers each run.
 
+Important: this repo includes a small root-level [main.py](../main.py) shim so hosted runtimes can import `main.main`. The application code lives under `eta-alert/`.
+
 ### Bundling safely (avoid leaking secrets)
 
 If you use the `samsara-fn` CLI to bundle a zip, make sure you **do not include** local secret files:
@@ -66,6 +68,18 @@ Optional:
 - `EMAIL_TO_OVERRIDE` — optional override recipient; if set, **all** emails go to this address (useful for testing)
 - `TARGET_MINUTES` — default `60`
 - `WINDOW_MINUTES` — default `5` (triggers in `[TARGET - WINDOW, TARGET + WINDOW)` minutes)
+
+### Webhook-only (recommended)
+
+If you only want webhooks (no email), set these secrets:
+
+- `SAMSARA_TOKEN`
+- `NOTIFY_MODE=webhook`
+- `WEBHOOK_URL`
+
+And copy any filtering/tuning vars you use locally (e.g. `ADDRESS_NAME_CONTAINS_ANY`, `ADDRESS_NAME_EXCLUDES_ANY`, `ROUTES_LOOKBACK_MINUTES`, etc.).
+
+Do not set email secrets (`OUTLOOK_*`, `SENDGRID_API_KEY`, `EMAIL_API_KEY`, etc.) if you don't want email.
 
 ## Outlook / Microsoft Graph
 
@@ -177,6 +191,8 @@ pip install -r .\eta-alert\requirements.txt
 $env:SAMSARA_TOKEN = "..."
 $env:EMAIL_API_KEY = "..."   # Postmark
 ```
+
+Note: `eta-alert/main.py` will load `eta-alert/.env` if present, but by default it will **not override** environment variables you've already set (set `DOTENV_OVERRIDE=1` to force `.env` to win).
 
 3) Run the handler
 
