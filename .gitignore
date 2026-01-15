@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local config / secrets
+eta-alert/.env
+eta-alert/.env.*
+
+# Local runtime state (dedupe, test runs)
+eta-alert/.function_storage*.json
+
+# Editor/OS noise
+.vscode/
+.DS_Store
+Thumbs.db
