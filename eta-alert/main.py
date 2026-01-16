@@ -1694,7 +1694,7 @@ def _compute_customer_name(route: dict[str, Any]) -> Optional[str]:
 
     Rules:
     - If it's a Gerkin load (any stop contains 'gerkin'), customer is 'Gerkin'.
-    - Else if the starting place (first stop) contains 'bomgaars', customer is 'Bomgaars'.
+    - Else if any stop contains 'bomgaars', customer is 'Bomgaars'.
     """
     stops = route.get("stops")
     if not isinstance(stops, list) or not stops:
@@ -1706,9 +1706,11 @@ def _compute_customer_name(route: dict[str, Any]) -> Optional[str]:
         if "gerkin" in _stop_address_name(stop).lower():
             return "Gerkin"
 
-    first_stop = stops[0] if isinstance(stops[0], dict) else None
-    if isinstance(first_stop, dict) and "bomgaars" in _stop_address_name(first_stop).lower():
-        return "Bomgaars"
+    for stop in stops:
+        if not isinstance(stop, dict):
+            continue
+        if "bomgaars" in _stop_address_name(stop).lower():
+            return "Bomgaars"
 
     return None
 
