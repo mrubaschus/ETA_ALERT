@@ -262,13 +262,13 @@ PRINT_MATCHES_LIMIT = int(os.getenv("PRINT_MATCHES_LIMIT", "50"))
 PRINT_MATCHES_SCOPE = os.getenv("PRINT_MATCHES_SCOPE", "notify").lower().strip()  # notify | filtered
 
 # Optional alert guards (affect notifications only, not printing/tracking).
-ALERT_ONLY_NEXT_UPCOMING_STOP = os.getenv("ALERT_ONLY_NEXT_UPCOMING_STOP", "0").lower().strip() in (
+ALERT_ONLY_NEXT_UPCOMING_STOP = os.getenv("ALERT_ONLY_NEXT_UPCOMING_STOP", "1").lower().strip() in (
     "1",
     "true",
     "yes",
     "y",
 )
-REQUIRE_STOP_EN_ROUTE_FOR_ALERTS = os.getenv("REQUIRE_STOP_EN_ROUTE_FOR_ALERTS", "0").lower().strip() in (
+REQUIRE_STOP_EN_ROUTE_FOR_ALERTS = os.getenv("REQUIRE_STOP_EN_ROUTE_FOR_ALERTS", "1").lower().strip() in (
     "1",
     "true",
     "yes",
