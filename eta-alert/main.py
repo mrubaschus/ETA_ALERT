@@ -49,7 +49,7 @@ SAMSARA_ROUTES_PATH: str = "/fleet/routes"
 ROUTES_LOOKBACK_MINUTES: int = 10080      # 7 days
 ROUTES_LOOKAHEAD_MINUTES: int = 10080     # 7 days
 ROUTES_PAGE_SIZE: int = 50                # API caps at 50/page regardless
-ROUTES_MAX_PAGES: int = 50               # 50 pages × 50 = up to 2500 routes
+ROUTES_MAX_PAGES: int = 0                 # 0 = unlimited (fetch all pages)
 
 
 # ── Secrets / env loading ────────────────────────────────────────────────────
@@ -449,8 +449,12 @@ def fetch_routes(cfg: dict[str, Any]) -> list[dict[str, Any]]:
 
     all_routes: list[dict[str, Any]] = []
     cursor: Optional[str] = None
+    page = 0
 
-    for _ in range(ROUTES_MAX_PAGES):
+    while True:
+        page += 1
+        if ROUTES_MAX_PAGES > 0 and page > ROUTES_MAX_PAGES:
+            break
         params: dict[str, Any] = {"startTime": start, "endTime": end, "limit": ROUTES_PAGE_SIZE}
         if cursor:
             params["after"] = cursor
