@@ -1327,6 +1327,42 @@ def send_email(
     _postmark_send_email(to_email=to_email, subject=subject, text_body=text_body, html_body=html_body)
 
 
+def _extract_trailer_info(route_obj: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Extract trailer info from the route object.
+
+    Samsara routes may include trailer(s) as:
+      - route.trailer (object)
+      - route.trailers (list of objects)
+
+    Each trailer object typically has: id, name, externalIds.
+    We return the first trailer if available, or None.
+    """
+    if not isinstance(route_obj, dict):
+        return None
+
+    # Single trailer object
+    trailer = route_obj.get("trailer")
+    if isinstance(trailer, dict) and trailer.get("id"):
+        return {
+            "id": trailer.get("id"),
+            "name": trailer.get("name"),
+            "externalIds": trailer.get("externalIds"),
+        }
+
+    # List of trailers
+    trailers = route_obj.get("trailers")
+    if isinstance(trailers, list) and trailers:
+        first = trailers[0]
+        if isinstance(first, dict) and first.get("id"):
+            return {
+                "id": first.get("id"),
+                "name": first.get("name"),
+                "externalIds": first.get("externalIds"),
+            }
+
+    return None
+
+
 def send_webhook(*, stop: dict[str, Any], eta_iso: str, route: Optional[dict[str, Any]] = None) -> None:
     url = _require_env("WEBHOOK_URL", WEBHOOK_URL)
     method = WEBHOOK_METHOD or "POST"
@@ -1382,6 +1418,7 @@ def send_webhook(*, stop: dict[str, Any], eta_iso: str, route: Optional[dict[str
         },
         "vehicle": route_obj.get("vehicle"),
         "driver": route_obj.get("driver"),
+        "trailer": _extract_trailer_info(route_obj),
         "trackingUrl": tracking_url,
         "eta": eta_iso,
         "sentAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
