@@ -374,7 +374,7 @@ def _extract_phone(text: str) -> tuple[Optional[str], Optional[str]]:
     digits = f"{area}{prefix}{line}"
     if len(digits) != 10 or not digits.isdigit():
         return None, None
-    return f"+1{digits}", (ext.strip() if ext and ext.strip() else None)
+    return f"1{digits}", (ext.strip() if ext and ext.strip() else None)
 
 
 def _stop_notes_text(stop: dict[str, Any]) -> str:
