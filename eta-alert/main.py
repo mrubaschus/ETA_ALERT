@@ -40,7 +40,7 @@ TARGET_MINUTES: float = 60.0
 WINDOW_MINUTES: float = 5.0
 DISPLAY_TIMEZONE: str = "America/Chicago"
 TRIGGER_MODE: str = "crossing"            # crossing | window
-TRIGGER_NO_HISTORY_MODE: str = "window"   # fallback when no prior observation
+TRIGGER_NO_HISTORY_MODE: str = "below_target"   # fallback when no prior observation
 REQUIRE_STOP_EN_ROUTE: bool = True
 ALERT_ONLY_NEXT_STOP: bool = True
 
