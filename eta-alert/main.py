@@ -48,8 +48,8 @@ SAMSARA_BASE_URL: str = "https://api.samsara.com"
 SAMSARA_ROUTES_PATH: str = "/fleet/routes"
 ROUTES_LOOKBACK_MINUTES: int = 10080      # 7 days
 ROUTES_LOOKAHEAD_MINUTES: int = 10080     # 7 days
-ROUTES_PAGE_SIZE: int = 512
-ROUTES_MAX_PAGES: int = 5
+ROUTES_PAGE_SIZE: int = 50                # API caps at 50/page regardless
+ROUTES_MAX_PAGES: int = 50               # 50 pages × 50 = up to 2500 routes
 
 
 # ── Secrets / env loading ────────────────────────────────────────────────────
