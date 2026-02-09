@@ -171,8 +171,23 @@ def _load_env() -> dict[str, Any]:
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _csv(value: str) -> list[str]:
-    """Split comma-separated string into lowered, stripped, non-empty parts."""
+    """Split comma-separated string into lowered, stripped, non-empty parts.
+
+    Patterns starting with '=' are kept as-is (exact match marker).
+    All patterns are lowered for case-insensitive comparison.
+    """
     return [p.strip().lower() for p in value.split(",") if p.strip()] if value else []
+
+
+def _pattern_matches(haystack: str, pattern: str) -> bool:
+    """Check if a pattern matches a haystack string (both already lowered).
+
+    - '=bomgaars supply #2' -> exact match (address must equal 'bomgaars supply #2')
+    - 'bomgaars' -> substring match (address must contain 'bomgaars')
+    """
+    if pattern.startswith("="):
+        return haystack == pattern[1:]
+    return pattern in haystack
 
 
 def _require(name: str, value: str) -> str:
@@ -244,14 +259,14 @@ def _address_filter_passes(stop: dict[str, Any], *, allow: list[str], bypass: bo
     if bypass:
         return True
     h = _stop_address_name(stop).lower()
-    return any(p in h for p in allow)
+    return any(_pattern_matches(h, p) for p in allow)
 
 
 def _address_is_suppressed(stop: dict[str, Any], *, deny: list[str]) -> bool:
     if not deny:
         return False
     h = _stop_address_name(stop).lower()
-    return any(p in h for p in deny)
+    return any(_pattern_matches(h, p) for p in deny)
 
 
 def _route_force_include(route: dict[str, Any], *, patterns: list[str]) -> bool:
@@ -263,7 +278,7 @@ def _route_force_include(route: dict[str, Any], *, patterns: list[str]) -> bool:
     for s in stops:
         if not isinstance(s, dict):
             continue
-        if any(p in _stop_address_name(s).lower() for p in patterns):
+        if any(_pattern_matches(_stop_address_name(s).lower(), p) for p in patterns):
             return True
     return False
 
