@@ -654,11 +654,18 @@ def main(event=None, context=None):
             # Cold-start dedup: if /tmp was wiped (cold start) we have no stored
             # state, but a prior 5-min-ago invocation likely already sent this.
             # Guard: only alert if the stop became en-route recently (within
-            # COLD_START_DEDUP_MINUTES).  If it's been en-route longer, skip.
+            # COLD_START_DEDUP_MINUTES).  If it's been en-route longer, skip
+            # and persist the decision so persistent storage has the record.
             if not state:
                 er_mins = _en_route_minutes(stop)
                 if er_mins is not None and er_mins > COLD_START_DEDUP_MINUTES:
                     skipped["already"] += 1
+                    set_item(stop_key, {
+                        "notified": True,
+                        "coldStartDedup": True,
+                        "lastSeenAt": datetime.now(timezone.utc).isoformat(),
+                        "lastEta": eta_iso, "lastMinutes": mins,
+                    })
                     continue
 
             # Next-stop guard

@@ -74,8 +74,11 @@ def get_item(key: str, *, storage_path: Optional[str] = None) -> Optional[dict[s
         db = _get_samsara_db()
         if db is not None:
             try:
-                return db.get_dict(key)
-            except Exception:
+                val = db.get_dict(key)
+                print(f"[storage] GET key={key} found={val is not None}")
+                return val
+            except Exception as exc:
+                print(f"[storage] GET FAILED key={key}: {type(exc).__name__}: {exc}")
                 return None
     # local fallback
     path = _resolve_storage_path(storage_path)
@@ -90,9 +93,10 @@ def set_item(key: str, value: dict[str, Any], *, storage_path: Optional[str] = N
         if db is not None:
             try:
                 db.put_dict(key, value)
+                print(f"[storage] PUT OK key={key}")
                 return
             except Exception as exc:
-                print(f"[WARN] Samsara DB put failed for {key}: {type(exc).__name__}: {exc}")
+                print(f"[storage] PUT FAILED key={key}: {type(exc).__name__}: {exc}")
     # local fallback
     path = _resolve_storage_path(storage_path)
     data = _load_all(path)
