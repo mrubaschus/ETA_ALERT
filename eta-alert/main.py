@@ -43,6 +43,7 @@ TRIGGER_MODE: str = "crossing"            # crossing | window
 TRIGGER_NO_HISTORY_MODE: str = "below_target"   # fallback when no prior observation
 REQUIRE_STOP_EN_ROUTE: bool = True
 ALERT_ONLY_NEXT_STOP: bool = True
+COLD_START_DEDUP_MINUTES: float = 10.0  # 2× polling interval; skip if en-route longer than this with no stored state
 
 SAMSARA_BASE_URL: str = "https://api.samsara.com"
 SAMSARA_ROUTES_PATH: str = "/fleet/routes"
@@ -330,7 +331,7 @@ def _should_notify(*, stop_state: Optional[dict[str, Any]], minutes_now: float) 
     # crossing mode
     if last is not None:
         return last > TARGET_MINUTES and minutes_now <= TARGET_MINUTES
-    # No history — use window fallback
+    # No history — use below_target fallback
     if TRIGGER_NO_HISTORY_MODE == "below_target":
         return minutes_now <= TARGET_MINUTES
     if TRIGGER_NO_HISTORY_MODE == "none":
@@ -338,7 +339,16 @@ def _should_notify(*, stop_state: Optional[dict[str, Any]], minutes_now: float) 
     return within_target_window(minutes_now)
 
 
-def _compute_customer_name(route: dict[str, Any]) -> Optional[str]:
+def _en_route_minutes(stop: dict[str, Any]) -> Optional[float]:
+    """How many minutes ago did this stop become en-route?"""
+    ert = stop.get("enRouteTime")
+    if not isinstance(ert, str) or not ert.strip():
+        return None
+    try:
+        en_route_dt = _parse_rfc3339(ert)
+        return (datetime.now(timezone.utc) - en_route_dt).total_seconds() / 60.0
+    except Exception:
+        return None
     stops = route.get("stops")
     if not isinstance(stops, list):
         return None
@@ -353,9 +363,15 @@ def _compute_customer_name(route: dict[str, Any]) -> Optional[str]:
 
 # ── Phone extraction ─────────────────────────────────────────────────────────
 
+# 10-digit (with optional area code parens) or 7-digit phone numbers
 _PHONE_RE = re.compile(
     r"(?:(?:\+?1[\s\-\.]*)?)"
     r"(?:\(\s*(\d{3})\s*\)|(\d{3}))[\s\-\.]*(\d{3})[\s\-\.]*(\d{4})"
+    r"(?:\s*(?:x|ext\.?|extension)\s*(\d{1,6}))?",
+    re.IGNORECASE,
+)
+_PHONE_7_RE = re.compile(
+    r"(\d{3})[\s\-\.]+(\d{4})"
     r"(?:\s*(?:x|ext\.?|extension)\s*(\d{1,6}))?",
     re.IGNORECASE,
 )
@@ -364,17 +380,24 @@ _PHONE_RE = re.compile(
 def _extract_phone(text: str) -> tuple[Optional[str], Optional[str]]:
     if not isinstance(text, str) or not text.strip():
         return None, None
+    # Try 10-digit first
     m = _PHONE_RE.search(text)
-    if not m:
-        return None, None
-    area = m.group(1) or m.group(2)
-    prefix, line, ext = m.group(3), m.group(4), m.group(5)
-    if not (area and prefix and line):
-        return None, None
-    digits = f"{area}{prefix}{line}"
-    if len(digits) != 10 or not digits.isdigit():
-        return None, None
-    return f"1{digits}", (ext.strip() if ext and ext.strip() else None)
+    if m:
+        area = m.group(1) or m.group(2)
+        prefix, line, ext = m.group(3), m.group(4), m.group(5)
+        if area and prefix and line:
+            digits = f"{area}{prefix}{line}"
+            if len(digits) == 10 and digits.isdigit():
+                return f"1{digits}", (ext.strip() if ext and ext.strip() else None)
+    # Fall back to 7-digit
+    m7 = _PHONE_7_RE.search(text)
+    if m7:
+        prefix, line, ext = m7.group(1), m7.group(2), m7.group(3)
+        if prefix and line:
+            digits = f"{prefix}{line}"
+            if len(digits) == 7 and digits.isdigit():
+                return digits, (ext.strip() if ext and ext.strip() else None)
+    return None, None
 
 
 def _stop_notes_text(stop: dict[str, Any]) -> str:
@@ -625,6 +648,16 @@ def main(event=None, context=None):
                         "lastSeenAt": datetime.now(timezone.utc).isoformat(),
                         "lastEta": eta_iso, "lastMinutes": mins, "notified": False,
                     })
+                    continue
+
+            # Cold-start dedup: if /tmp was wiped (cold start) we have no stored
+            # state, but a prior 5-min-ago invocation likely already sent this.
+            # Guard: only alert if the stop became en-route recently (within
+            # COLD_START_DEDUP_MINUTES).  If it's been en-route longer, skip.
+            if not state:
+                er_mins = _en_route_minutes(stop)
+                if er_mins is not None and er_mins > COLD_START_DEDUP_MINUTES:
+                    skipped["already"] += 1
                     continue
 
             # Next-stop guard
