@@ -42,6 +42,9 @@ def _default_storage_path() -> str:
     explicit = os.getenv("FUNCTION_STORAGE_PATH")
     if explicit:
         return explicit
+    # In Lambda /var/task is read-only — use /tmp for the fallback file
+    if os.path.isdir("/tmp"):
+        return "/tmp/.function_storage.json"
     return str(Path(__file__).with_name(".function_storage.json"))
 
 
@@ -97,11 +100,15 @@ def set_item(key: str, value: dict[str, Any], *, storage_path: Optional[str] = N
                 return
             except Exception as exc:
                 print(f"[storage] PUT FAILED key={key}: {type(exc).__name__}: {exc}")
+                # fall through to local fallback
     # local fallback
     path = _resolve_storage_path(storage_path)
-    data = _load_all(path)
-    data[key] = value
-    _save_all(path, data)
+    try:
+        data = _load_all(path)
+        data[key] = value
+        _save_all(path, data)
+    except OSError as exc:
+        print(f"[storage] local write FAILED path={path}: {exc}")
 
 
 def delete_item(key: str, *, storage_path: Optional[str] = None) -> None:
@@ -118,4 +125,7 @@ def delete_item(key: str, *, storage_path: Optional[str] = None) -> None:
     data = _load_all(path)
     if key in data:
         del data[key]
-        _save_all(path, data)
+        try:
+            _save_all(path, data)
+        except OSError:
+            pass
