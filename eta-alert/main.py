@@ -591,9 +591,12 @@ def main(event=None, context=None):
     skipped = {"already": 0, "no_eta": 0, "not_in_window": 0, "filtered": 0,
                "past": 0, "suppressed": 0, "not_next_stop": 0, "not_en_route": 0}
 
+    tracked = []  # collect matching stops for summary log
+
     for route in routes:
         bypass = _route_force_include(route, patterns=cfg["force_include"])
         next_id, next_eta, next_mins = _route_next_upcoming_stop(route)
+        route_name = route.get("name", "?")
 
         stops = route.get("stops")
         if not isinstance(stops, list):
@@ -610,6 +613,8 @@ def main(event=None, context=None):
                 skipped["filtered"] += 1
                 continue
 
+            addr_name = _stop_address_name(stop)
+
             if _stop_is_completed(stop):
                 skipped["past"] += 1
                 continue
@@ -624,11 +629,18 @@ def main(event=None, context=None):
                 skipped["past"] += 1
                 continue
 
+            # Track this stop for the summary log
+            ert = stop.get("enRouteTime")
+            is_en_route = isinstance(ert, str) and bool(ert.strip())
+
             stop_key = str(stop_id)
             state = get_item(stop_key) or {}
 
             if isinstance(state, dict) and state.get("notified") is True:
                 skipped["already"] += 1
+                tracked.append({"route": route_name, "addr": addr_name,
+                                 "mins": round(mins, 1), "status": "already_sent",
+                                 "en_route": is_en_route})
                 continue
 
             if not _should_notify(stop_state=state, minutes_now=mins):
@@ -638,6 +650,9 @@ def main(event=None, context=None):
                     "lastSeenAt": datetime.now(timezone.utc).isoformat(),
                     "lastEta": eta_iso, "lastMinutes": mins, "notified": False,
                 })
+                tracked.append({"route": route_name, "addr": addr_name,
+                                 "mins": round(mins, 1), "status": "approaching",
+                                 "en_route": is_en_route})
                 continue
 
             # En-route guard
@@ -650,6 +665,9 @@ def main(event=None, context=None):
                         "lastSeenAt": datetime.now(timezone.utc).isoformat(),
                         "lastEta": eta_iso, "lastMinutes": mins, "notified": False,
                     })
+                    tracked.append({"route": route_name, "addr": addr_name,
+                                     "mins": round(mins, 1), "status": "not_en_route",
+                                     "en_route": False})
                     continue
 
             # Cold-start dedup: if /tmp was wiped (cold start) we have no stored
@@ -667,6 +685,9 @@ def main(event=None, context=None):
                         "lastSeenAt": datetime.now(timezone.utc).isoformat(),
                         "lastEta": eta_iso, "lastMinutes": mins,
                     })
+                    tracked.append({"route": route_name, "addr": addr_name,
+                                     "mins": round(mins, 1), "status": "coldstart_dedup",
+                                     "en_route": is_en_route})
                     continue
 
             # Next-stop guard
@@ -677,6 +698,9 @@ def main(event=None, context=None):
                     "lastSeenAt": datetime.now(timezone.utc).isoformat(),
                     "lastEta": eta_iso, "lastMinutes": mins, "notified": False,
                 })
+                tracked.append({"route": route_name, "addr": addr_name,
+                                 "mins": round(mins, 1), "status": "not_next_stop",
+                                 "en_route": is_en_route})
                 continue
 
             # Deny-list suppression
@@ -700,6 +724,9 @@ def main(event=None, context=None):
                     "lastEta": eta_iso, "lastMinutes": mins, "notified": False,
                     "webhookError": f"{type(e).__name__}: {e}",
                 })
+                tracked.append({"route": route_name, "addr": addr_name,
+                                 "mins": round(mins, 1), "status": "webhook_failed",
+                                 "en_route": is_en_route})
                 continue
 
             set_item(stop_key, {
@@ -711,6 +738,19 @@ def main(event=None, context=None):
                 "lastEta": eta_iso, "lastMinutes": mins,
             })
             sent += 1
+            tracked.append({"route": route_name, "addr": addr_name,
+                             "mins": round(mins, 1), "status": "SENT",
+                             "en_route": is_en_route})
+
+    # ── Log tracked stops sorted by ETA ──────────────────────────────────
+    if tracked:
+        tracked.sort(key=lambda t: t["mins"])
+        print(f"[tracker] {len(tracked)} matching stop(s):")
+        for t in tracked:
+            en = "EN_ROUTE" if t["en_route"] else "scheduled"
+            print(f"  {t['mins']:6.1f}m | {en:<10} | {t['status']:<16} | {t['route']} -> {t['addr']}")
+    else:
+        print("[tracker] no matching stops found")
 
     # ── Cleanup stale entries ────────────────────────────────────────────
     cleaned = 0
