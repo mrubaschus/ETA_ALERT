@@ -581,7 +581,8 @@ def main(event=None, context=None):
     # Brief status line for hosted logs
     print(f"[secrets] ssm={os.environ.get('_ETA_ALERT_SECRETS_APPLIED') == '1'} "
           f"ctx={os.environ.get('_ETA_ALERT_CTX_SECRETS') == '1'} "
-          f"token={bool(cfg['token'])} webhook={bool(cfg['webhook_url'])}")
+          f"token={bool(cfg['token'])} webhook={bool(cfg['webhook_url'])} "
+          f"storage={os.environ.get('SamsaraFunctionStorageName', 'local')}")
 
     routes = fetch_routes(cfg)
 
