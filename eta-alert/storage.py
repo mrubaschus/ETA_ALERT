@@ -129,3 +129,19 @@ def delete_item(key: str, *, storage_path: Optional[str] = None) -> None:
             _save_all(path, data)
         except OSError:
             pass
+
+
+def list_keys(*, storage_path: Optional[str] = None) -> list[str]:
+    """Return all stored keys."""
+    if _use_samsara_storage():
+        db = _get_samsara_db()
+        if db is not None:
+            try:
+                return list(db.keys())
+            except Exception as exc:
+                print(f"[storage] KEYS FAILED: {type(exc).__name__}: {exc}")
+                return []
+    # local fallback
+    path = _resolve_storage_path(storage_path)
+    data = _load_all(path)
+    return list(data.keys())

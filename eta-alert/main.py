@@ -33,7 +33,7 @@ except Exception:
     pass
 
 import requests
-from storage import get_item, set_item
+from storage import get_item, set_item, delete_item, list_keys
 
 # ── Hardcoded configuration ──────────────────────────────────────────────────
 TARGET_MINUTES: float = 60.0
@@ -44,6 +44,7 @@ TRIGGER_NO_HISTORY_MODE: str = "below_target"   # fallback when no prior observa
 REQUIRE_STOP_EN_ROUTE: bool = True
 ALERT_ONLY_NEXT_STOP: bool = True
 COLD_START_DEDUP_MINUTES: float = 10.0  # 2× polling interval; skip if en-route longer than this with no stored state
+STORAGE_TTL_HOURS: float = 24.0          # purge stored stop entries older than this
 
 SAMSARA_BASE_URL: str = "https://api.samsara.com"
 SAMSARA_ROUTES_PATH: str = "/fleet/routes"
@@ -711,10 +712,36 @@ def main(event=None, context=None):
             })
             sent += 1
 
+    # ── Cleanup stale entries ────────────────────────────────────────────
+    cleaned = 0
+    try:
+        now_utc = datetime.now(timezone.utc)
+        ttl_cutoff = now_utc - timedelta(hours=STORAGE_TTL_HOURS)
+        for key in list_keys():
+            try:
+                entry = get_item(key)
+                if not isinstance(entry, dict):
+                    delete_item(key)
+                    cleaned += 1
+                    continue
+                last_seen = entry.get("lastSeenAt") or entry.get("sentAt", "")
+                if last_seen:
+                    ts = datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
+                    if ts < ttl_cutoff:
+                        delete_item(key)
+                        cleaned += 1
+            except Exception:
+                pass
+    except Exception as exc:
+        print(f"[cleanup] error: {type(exc).__name__}: {exc}")
+    if cleaned:
+        print(f"[cleanup] purged {cleaned} stale entries (>{STORAGE_TTL_HOURS}h old)")
+
     result = {
         "status": "ok",
         "routes": len(routes),
         "sent": sent,
+        "cleaned": cleaned,
         "skipped": skipped,
         "config": {
             "target_minutes": TARGET_MINUTES,
