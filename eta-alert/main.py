@@ -742,15 +742,8 @@ def main(event=None, context=None):
                              "mins": round(mins, 1), "status": "SENT",
                              "en_route": is_en_route})
 
-    # ── Log tracked stops sorted by ETA ──────────────────────────────────
-    if tracked:
-        tracked.sort(key=lambda t: t["mins"])
-        print(f"[tracker] {len(tracked)} matching stop(s):")
-        for t in tracked:
-            en = "EN_ROUTE" if t["en_route"] else "scheduled"
-            print(f"  {t['mins']:6.1f}m | {en:<10} | {t['status']:<16} | {t['route']} -> {t['addr']}")
-    else:
-        print("[tracker] no matching stops found")
+    # ── Sort tracked stops by ETA ──────────────────────────────────────
+    tracked.sort(key=lambda t: t["mins"])
 
     # ── Cleanup stale entries ────────────────────────────────────────────
     cleaned = 0
@@ -782,6 +775,7 @@ def main(event=None, context=None):
         "routes": len(routes),
         "sent": sent,
         "cleaned": cleaned,
+        "tracked": tracked,
         "skipped": skipped,
         "config": {
             "target_minutes": TARGET_MINUTES,
