@@ -350,6 +350,10 @@ def _en_route_minutes(stop: dict[str, Any]) -> Optional[float]:
         return (datetime.now(timezone.utc) - en_route_dt).total_seconds() / 60.0
     except Exception:
         return None
+
+
+def _compute_customer_name(route: dict[str, Any]) -> Optional[str]:
+    """Derive customer name from stop addresses on the route."""
     stops = route.get("stops")
     if not isinstance(stops, list):
         return None

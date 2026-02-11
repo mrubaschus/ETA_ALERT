@@ -13,7 +13,6 @@ from typing import Any, Optional
 # ---------------------------------------------------------------------------
 # Samsara persistent Database (S3-backed, survives cold starts)
 # ---------------------------------------------------------------------------
-_samsara_db = None  # lazy singleton
 
 
 def _use_samsara_storage() -> bool:
@@ -22,13 +21,10 @@ def _use_samsara_storage() -> bool:
 
 
 def _get_samsara_db():
-    global _samsara_db
-    if _samsara_db is not None:
-        return _samsara_db
+    """Get a fresh Database instance each call to avoid stale STS tokens."""
     try:
         from samsarafnstorage import get_database
-        _samsara_db = get_database("eta-alert")
-        return _samsara_db
+        return get_database("eta-alert")
     except Exception as exc:
         print(f"[WARN] Failed to init Samsara Database: {type(exc).__name__}: {exc}")
         return None
