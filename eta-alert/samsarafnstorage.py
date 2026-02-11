@@ -184,6 +184,14 @@ class Database:
 _credentials: None | dict[str, str] = None
 
 
+def _clear_caches():
+    """Clear all cached credentials and storage instances."""
+    global _credentials, _storage, _databases
+    _credentials = None
+    _storage = None
+    _databases = {}
+
+
 def get_credentials(force_refresh=False) -> dict[str, str]:
     global _credentials
     if _credentials is not None and not force_refresh:
@@ -205,19 +213,19 @@ def get_credentials(force_refresh=False) -> dict[str, str]:
 _storage: None | Storage = None
 
 
-def get_storage() -> Storage:
+def get_storage(force_refresh=False) -> Storage:
     global _storage
-    if _storage is not None:
+    if _storage is not None and not force_refresh:
         return _storage
 
-    _storage = Storage(get_credentials())
+    _storage = Storage(get_credentials(force_refresh=force_refresh))
     return _storage
 
 
 _databases: dict[str, Database] = {}
 
 
-def get_database(namespace: str | None = None) -> Database:
+def get_database(namespace: str | None = None, force_refresh=False) -> Database:
     """
     Get a database instance.
     If `namespace` is `None`, the function name will be used.
@@ -227,8 +235,8 @@ def get_database(namespace: str | None = None) -> Database:
         namespace = os.environ["SamsaraFunctionName"]
 
     global _databases
-    if namespace in _databases:
+    if namespace in _databases and not force_refresh:
         return _databases[namespace]
 
-    _databases[namespace] = Database(get_storage(), namespace)
+    _databases[namespace] = Database(get_storage(force_refresh=force_refresh), namespace)
     return _databases[namespace]

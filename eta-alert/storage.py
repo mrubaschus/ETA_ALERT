@@ -20,14 +20,20 @@ def _use_samsara_storage() -> bool:
     return bool(os.getenv("SamsaraFunctionStorageName"))
 
 
-def _get_samsara_db():
-    """Get a fresh Database instance each call to avoid stale STS tokens."""
+def _get_samsara_db(force_refresh=False):
+    """Get a Database instance, optionally refreshing credentials."""
     try:
         from samsarafnstorage import get_database
-        return get_database("eta-alert")
+        return get_database("eta-alert", force_refresh=force_refresh)
     except Exception as exc:
         print(f"[WARN] Failed to init Samsara Database: {type(exc).__name__}: {exc}")
         return None
+
+
+def _is_expired_token_error(exc: Exception) -> bool:
+    """Check if exception is an AWS ExpiredToken error."""
+    exc_str = str(exc)
+    return "ExpiredToken" in exc_str or "expired" in exc_str.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -70,15 +76,19 @@ def _save_all(path: str, data: dict[str, Any]) -> None:
 
 def get_item(key: str, *, storage_path: Optional[str] = None) -> Optional[dict[str, Any]]:
     if _use_samsara_storage():
-        db = _get_samsara_db()
-        if db is not None:
-            try:
-                val = db.get_dict(key)
-                print(f"[storage] GET key={key} found={val is not None}")
-                return val
-            except Exception as exc:
-                print(f"[storage] GET FAILED key={key}: {type(exc).__name__}: {exc}")
-                return None
+        for attempt in range(2):
+            db = _get_samsara_db(force_refresh=(attempt > 0))
+            if db is not None:
+                try:
+                    val = db.get_dict(key)
+                    print(f"[storage] GET key={key} found={val is not None}")
+                    return val
+                except Exception as exc:
+                    if attempt == 0 and _is_expired_token_error(exc):
+                        print(f"[storage] GET expired token, refreshing...")
+                        continue
+                    print(f"[storage] GET FAILED key={key}: {type(exc).__name__}: {exc}")
+                    return None
     # local fallback
     path = _resolve_storage_path(storage_path)
     data = _load_all(path)
@@ -88,15 +98,20 @@ def get_item(key: str, *, storage_path: Optional[str] = None) -> Optional[dict[s
 
 def set_item(key: str, value: dict[str, Any], *, storage_path: Optional[str] = None) -> None:
     if _use_samsara_storage():
-        db = _get_samsara_db()
-        if db is not None:
-            try:
-                db.put_dict(key, value)
-                print(f"[storage] PUT OK key={key}")
-                return
-            except Exception as exc:
-                print(f"[storage] PUT FAILED key={key}: {type(exc).__name__}: {exc}")
-                # fall through to local fallback
+        for attempt in range(2):
+            db = _get_samsara_db(force_refresh=(attempt > 0))
+            if db is not None:
+                try:
+                    db.put_dict(key, value)
+                    print(f"[storage] PUT OK key={key}")
+                    return
+                except Exception as exc:
+                    if attempt == 0 and _is_expired_token_error(exc):
+                        print(f"[storage] PUT expired token, refreshing...")
+                        continue
+                    print(f"[storage] PUT FAILED key={key}: {type(exc).__name__}: {exc}")
+                    # fall through to local fallback
+                    break
     # local fallback
     path = _resolve_storage_path(storage_path)
     try:
@@ -109,13 +124,16 @@ def set_item(key: str, value: dict[str, Any], *, storage_path: Optional[str] = N
 
 def delete_item(key: str, *, storage_path: Optional[str] = None) -> None:
     if _use_samsara_storage():
-        db = _get_samsara_db()
-        if db is not None:
-            try:
-                db.delete(key)
-                return
-            except Exception:
-                pass
+        for attempt in range(2):
+            db = _get_samsara_db(force_refresh=(attempt > 0))
+            if db is not None:
+                try:
+                    db.delete(key)
+                    return
+                except Exception as exc:
+                    if attempt == 0 and _is_expired_token_error(exc):
+                        continue
+                    pass
     # local fallback
     path = _resolve_storage_path(storage_path)
     data = _load_all(path)
@@ -130,13 +148,17 @@ def delete_item(key: str, *, storage_path: Optional[str] = None) -> None:
 def list_keys(*, storage_path: Optional[str] = None) -> list[str]:
     """Return all stored keys."""
     if _use_samsara_storage():
-        db = _get_samsara_db()
-        if db is not None:
-            try:
-                return list(db.keys())
-            except Exception as exc:
-                print(f"[storage] KEYS FAILED: {type(exc).__name__}: {exc}")
-                return []
+        for attempt in range(2):
+            db = _get_samsara_db(force_refresh=(attempt > 0))
+            if db is not None:
+                try:
+                    return list(db.keys())
+                except Exception as exc:
+                    if attempt == 0 and _is_expired_token_error(exc):
+                        print(f"[storage] KEYS expired token, refreshing...")
+                        continue
+                    print(f"[storage] KEYS FAILED: {type(exc).__name__}: {exc}")
+                    return []
     # local fallback
     path = _resolve_storage_path(storage_path)
     data = _load_all(path)
