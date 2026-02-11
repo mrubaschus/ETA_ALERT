@@ -26,7 +26,7 @@ except Exception:
 
 import requests
 
-from storage import get_item, set_item
+from storage import get_item, set_item, STORAGE_ERROR
 
 
 def _maybe_apply_samsara_function_secrets_to_env() -> None:
@@ -1882,7 +1882,9 @@ def main(event=None, context=None):
                 continue
 
             stop_key = str(stop_id)
-            state = get_item(stop_key) or {}
+            state_raw = get_item(stop_key)
+            storage_failed = state_raw is STORAGE_ERROR
+            state = {} if (state_raw is None or storage_failed) else state_raw
             if isinstance(state, dict) and state.get("notified") is True:
                 skipped_already += 1
                 continue
