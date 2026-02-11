@@ -74,7 +74,12 @@ def _save_all(path: str, data: dict[str, Any]) -> None:
 # Public API  (unchanged signatures — get_item / set_item / delete_item)
 # ---------------------------------------------------------------------------
 
+# Sentinel to indicate storage read failed (vs key not found)
+STORAGE_ERROR = {"__storage_error__": True}
+
+
 def get_item(key: str, *, storage_path: Optional[str] = None) -> Optional[dict[str, Any]]:
+    """Returns dict if found, None if not found, STORAGE_ERROR if read failed."""
     if _use_samsara_storage():
         for attempt in range(2):
             db = _get_samsara_db(force_refresh=(attempt > 0))
@@ -88,7 +93,8 @@ def get_item(key: str, *, storage_path: Optional[str] = None) -> Optional[dict[s
                         print(f"[storage] GET expired token, refreshing...")
                         continue
                     print(f"[storage] GET FAILED key={key}: {type(exc).__name__}: {exc}")
-                    return None
+                    return STORAGE_ERROR
+        return STORAGE_ERROR  # both attempts failed
     # local fallback
     path = _resolve_storage_path(storage_path)
     data = _load_all(path)

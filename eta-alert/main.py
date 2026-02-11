@@ -33,7 +33,7 @@ except Exception:
     pass
 
 import requests
-from storage import get_item, set_item, delete_item, list_keys
+from storage import get_item, set_item, delete_item, list_keys, STORAGE_ERROR
 
 # ── Hardcoded configuration ──────────────────────────────────────────────────
 TARGET_MINUTES: float = 60.0
@@ -642,7 +642,9 @@ def main(event=None, context=None):
             is_en_route = isinstance(ert, str) and bool(ert.strip())
 
             stop_key = str(stop_id)
-            state = get_item(stop_key) or {}
+            state_raw = get_item(stop_key)
+            storage_failed = state_raw is STORAGE_ERROR
+            state = {} if (state_raw is None or storage_failed) else state_raw
 
             if isinstance(state, dict) and state.get("notified") is True:
                 skipped["already"] += 1
@@ -683,7 +685,8 @@ def main(event=None, context=None):
             # Guard: only alert if the stop became en-route recently (within
             # COLD_START_DEDUP_MINUTES).  If it's been en-route longer, skip
             # and persist the decision so persistent storage has the record.
-            if not state:
+            # IMPORTANT: Only apply if storage read succeeded (not on error).
+            if not state and not storage_failed:
                 er_mins = _en_route_minutes(stop)
                 if er_mins is not None and er_mins > COLD_START_DEDUP_MINUTES:
                     skipped["already"] += 1
