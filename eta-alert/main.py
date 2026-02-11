@@ -321,12 +321,16 @@ def _should_notify(*, stop_state: Optional[dict[str, Any]], minutes_now: float) 
         return False
     last: Optional[float] = None
     if isinstance(stop_state, dict):
-        lm = stop_state.get("lastMinutes")
-        try:
-            if lm is not None:
-                last = float(lm)
-        except Exception:
-            pass
+        # If previous attempt had webhook error, ignore lastMinutes so retry uses fresh logic
+        if stop_state.get("webhookError") and stop_state.get("notified") is False:
+            last = None
+        else:
+            lm = stop_state.get("lastMinutes")
+            try:
+                if lm is not None:
+                    last = float(lm)
+            except Exception:
+                pass
     if TRIGGER_MODE == "window":
         return within_target_window(minutes_now)
     # crossing mode
@@ -722,10 +726,11 @@ def main(event=None, context=None):
                 send_webhook(stop=stop, eta_iso=eta_iso, route=route, cfg=cfg)
             except Exception as e:
                 print(f"[webhook] FAILED stopId={stop_id}: {type(e).__name__}: {e}")
+                # Don't update lastMinutes on failure — preserve crossing logic for retry
                 set_item(stop_key, {
                     **(state if isinstance(state, dict) else {}),
                     "lastSeenAt": datetime.now(timezone.utc).isoformat(),
-                    "lastEta": eta_iso, "lastMinutes": mins, "notified": False,
+                    "lastEta": eta_iso, "notified": False,
                     "webhookError": f"{type(e).__name__}: {e}",
                 })
                 tracked.append({"route": route_name, "addr": addr_name,
