@@ -1,52 +1,42 @@
-"""KV storage — Samsara persistent Database in hosted mode, local JSON fallback.
-
-When running inside Samsara Functions (SamsaraFunctionStorageName env var is set),
-uses the official `samsarafnstorage.Database` backed by S3 so state survives cold
-starts.  Locally (no env var), falls back to a JSON file next to this script.
-"""
-
 import json
 import os
 from pathlib import Path
 from typing import Any, Optional
 
-# ---------------------------------------------------------------------------
-# Samsara persistent Database (S3-backed, survives cold starts)
-# ---------------------------------------------------------------------------
 
+def _is_serverless_readonly_task_root() -> bool:
+    # AWS Lambda / Lambda-like environments mount the code package at /var/task (read-only).
+    # Samsara Functions is Lambda-like.
+    return bool(
+        os.getenv("AWS_LAMBDA_FUNCTION_NAME")
+        or os.getenv("LAMBDA_TASK_ROOT")
+        or os.getenv("AWS_EXECUTION_ENV")
+    )
 
-def _use_samsara_storage() -> bool:
-    """True when running inside Samsara Functions with storage configured."""
-    return bool(os.getenv("SamsaraFunctionStorageName"))
-
-
-def _get_samsara_db(force_refresh=False):
-    """Get a Database instance, optionally refreshing credentials."""
-    try:
-        from samsarafnstorage import get_database
-        return get_database("eta-alert", force_refresh=force_refresh)
-    except Exception as exc:
-        print(f"[WARN] Failed to init Samsara Database: {type(exc).__name__}: {exc}")
-        return None
-
-
-def _is_expired_token_error(exc: Exception) -> bool:
-    """Check if exception is an AWS ExpiredToken error."""
-    exc_str = str(exc)
-    return "ExpiredToken" in exc_str or "expired" in exc_str.lower()
-
-
-# ---------------------------------------------------------------------------
-# Local JSON fallback (development / non-Samsara runtimes)
-# ---------------------------------------------------------------------------
 
 def _default_storage_path() -> str:
+    # NOTE:
+    # Samsara "persistent-storage" template provides durable storage across runs.
+    # In this repo, we implement a simple JSON-backed KV store so you can:
+    # - test locally
+    # - run in environments where a persistent filesystem path is provided
+    #
+    # In serverless runtimes the deployment directory is read-only; use temp storage by default.
+    # This is best-effort dedupe (may be lost on cold start). For durable dedupe,
+    # set FUNCTION_STORAGE_PATH to a durable location or use the persistent-storage template.
     explicit = os.getenv("FUNCTION_STORAGE_PATH")
     if explicit:
         return explicit
-    # In Lambda /var/task is read-only — use /tmp for the fallback file
-    if os.path.isdir("/tmp"):
-        return "/tmp/.function_storage.json"
+
+    if _is_serverless_readonly_task_root():
+        temp_root = (
+            os.getenv("SamsaraFunctionTempStoragePath")
+            or os.getenv("TMPDIR")
+            or os.getenv("TEMP")
+            or "/tmp"
+        )
+        return str(Path(temp_root) / ".function_storage.json")
+
     return str(Path(__file__).with_name(".function_storage.json"))
 
 
@@ -58,9 +48,11 @@ def _load_all(path: str) -> dict[str, Any]:
     p = Path(path)
     if not p.exists():
         return {}
+
     try:
         return json.loads(p.read_text(encoding="utf-8"))
     except Exception:
+        # If storage is corrupted, fail safe by treating as empty.
         return {}
 
 
@@ -70,32 +62,7 @@ def _save_all(path: str, data: dict[str, Any]) -> None:
     p.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
 
 
-# ---------------------------------------------------------------------------
-# Public API  (unchanged signatures — get_item / set_item / delete_item)
-# ---------------------------------------------------------------------------
-
-# Sentinel to indicate storage read failed (vs key not found)
-STORAGE_ERROR = {"__storage_error__": True}
-
-
 def get_item(key: str, *, storage_path: Optional[str] = None) -> Optional[dict[str, Any]]:
-    """Returns dict if found, None if not found, STORAGE_ERROR if read failed."""
-    if _use_samsara_storage():
-        for attempt in range(2):
-            db = _get_samsara_db(force_refresh=(attempt > 0))
-            if db is not None:
-                try:
-                    val = db.get_dict(key)
-                    print(f"[storage] GET key={key} found={val is not None}")
-                    return val
-                except Exception as exc:
-                    if attempt == 0 and _is_expired_token_error(exc):
-                        print(f"[storage] GET expired token, refreshing...")
-                        continue
-                    print(f"[storage] GET FAILED key={key}: {type(exc).__name__}: {exc}")
-                    return STORAGE_ERROR
-        return STORAGE_ERROR  # both attempts failed
-    # local fallback
     path = _resolve_storage_path(storage_path)
     data = _load_all(path)
     value = data.get(key)
@@ -103,69 +70,15 @@ def get_item(key: str, *, storage_path: Optional[str] = None) -> Optional[dict[s
 
 
 def set_item(key: str, value: dict[str, Any], *, storage_path: Optional[str] = None) -> None:
-    if _use_samsara_storage():
-        for attempt in range(2):
-            db = _get_samsara_db(force_refresh=(attempt > 0))
-            if db is not None:
-                try:
-                    db.put_dict(key, value)
-                    print(f"[storage] PUT OK key={key}")
-                    return
-                except Exception as exc:
-                    if attempt == 0 and _is_expired_token_error(exc):
-                        print(f"[storage] PUT expired token, refreshing...")
-                        continue
-                    print(f"[storage] PUT FAILED key={key}: {type(exc).__name__}: {exc}")
-                    # fall through to local fallback
-                    break
-    # local fallback
     path = _resolve_storage_path(storage_path)
-    try:
-        data = _load_all(path)
-        data[key] = value
-        _save_all(path, data)
-    except OSError as exc:
-        print(f"[storage] local write FAILED path={path}: {exc}")
+    data = _load_all(path)
+    data[key] = value
+    _save_all(path, data)
 
 
 def delete_item(key: str, *, storage_path: Optional[str] = None) -> None:
-    if _use_samsara_storage():
-        for attempt in range(2):
-            db = _get_samsara_db(force_refresh=(attempt > 0))
-            if db is not None:
-                try:
-                    db.delete(key)
-                    return
-                except Exception as exc:
-                    if attempt == 0 and _is_expired_token_error(exc):
-                        continue
-                    pass
-    # local fallback
     path = _resolve_storage_path(storage_path)
     data = _load_all(path)
     if key in data:
         del data[key]
-        try:
-            _save_all(path, data)
-        except OSError:
-            pass
-
-
-def list_keys(*, storage_path: Optional[str] = None) -> list[str]:
-    """Return all stored keys."""
-    if _use_samsara_storage():
-        for attempt in range(2):
-            db = _get_samsara_db(force_refresh=(attempt > 0))
-            if db is not None:
-                try:
-                    return list(db.keys())
-                except Exception as exc:
-                    if attempt == 0 and _is_expired_token_error(exc):
-                        print(f"[storage] KEYS expired token, refreshing...")
-                        continue
-                    print(f"[storage] KEYS FAILED: {type(exc).__name__}: {exc}")
-                    return []
-    # local fallback
-    path = _resolve_storage_path(storage_path)
-    data = _load_all(path)
-    return list(data.keys())
+        _save_all(path, data)
